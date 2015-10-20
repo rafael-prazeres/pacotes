@@ -1,0 +1,340 @@
+# -*- coding: utf-8 -*-
+
+from django.forms.models import BaseInlineFormSet
+from django import forms
+from django.core.exceptions import ValidationError
+from django.db import models
+from smart_selects.db_fields import ChainedForeignKey
+from datetime import datetime, date, timedelta
+
+# Create your models here.
+
+class Pessoa(models.Model):
+	SEXO_FEMININO = 'F'
+	SEXO_MASCULINO = 'M'
+	SEXO_OPCOES = (
+		(SEXO_FEMININO, 'Feminino'),
+		(SEXO_MASCULINO, 'Masculino'),
+	)
+	TIPO_A_P = 'A+'
+	TIPO_B_P = 'B+'
+	TIPO_AB_P = 'AB+'
+	TIPO_O_P = 'O+'
+        TIPO_A_N = 'A-'
+        TIPO_B_N = 'B-'
+        TIPO_AB_N = 'AB-'
+        TIPO_O_N = 'O-'
+	TIPO_SANGUINEO_OPCOES = (
+		(TIPO_A_P, 'Tipo A Rh+'),
+		(TIPO_B_P, 'Tipo B Rh+'),
+		(TIPO_AB_P, 'Tipo AB Rh+'),
+		(TIPO_O_P, 'Tipo O Rh+'),
+		(TIPO_A_N, 'Tipo A Rh-'),
+		(TIPO_B_N, 'Tipo B Rh-'),
+		(TIPO_AB_N, 'Tipo AB Rh-'),
+		(TIPO_O_N, 'Tipo O Rh-'),
+	)
+	nome = models.CharField(max_length=200)
+	telefone = models.CharField(max_length=14)
+	email = models.EmailField(unique=True)
+	data_nascimento = models.DateField(blank=True, null=True)
+	tipo_sanguineo = models.CharField(max_length=3, choices=TIPO_SANGUINEO_OPCOES, blank=True, null=True)
+	sexo = models.CharField(max_length=1, choices=SEXO_OPCOES)
+
+        class Meta:
+                verbose_name = 'Cliente'
+                verbose_name_plural = 'Cadastro de Clientes'
+
+
+	def __unicode__(self):
+		#return self.nome + " | " + self.telefone + " | " + self.email +	" | " + self.tipo_sanguineo + " | " + self.sexo + " | " + self.data_nascimento.strftime('%d/%m/%Y')
+                #return str(self.id) +" - "+ self.nome
+		return self.nome
+
+class TipoDePacote(models.Model):
+	nome = models.CharField(max_length=200)
+	duracao_min = models.PositiveSmallIntegerField(verbose_name='Duração (em minutos)')
+	prazo_de_validade = models.PositiveSmallIntegerField(verbose_name='Prazo de Validade (em meses)')
+	venda_autorizada = models.BooleanField(default=False)
+        #duracao_min.short_description = 'Duração (em minutos)'
+
+	class Meta:
+		verbose_name = 'Tipo de Pacote'
+		verbose_name_plural = 'Cadastro de Tipos de Pacotes'
+
+
+
+	def ajuste_nome_coluna(self):
+		return self.duracao_min
+
+	def __unicode__(self):
+		#return "Nome: "+ self.nome + " | Horas: " + str(self.quantidade_de_horas) + " | Prazo: " + str(self.prazo_de_validade) + " | Vende: " + str(self.venda_autorizada)
+		#return str(self.id) +" - "+ self.nome
+		return self.nome
+	ajuste_nome_coluna.short_description = 'Duração (em minutos)'
+
+class Pacote(models.Model):
+	data_de_venda = models.DateField(auto_now_add=True)
+	responsavel_financeiro = models.ForeignKey(Pessoa, on_delete=models.PROTECT, related_name='responsavel_financeiro_pacote')
+	#data_de_compra = models.DateField()
+	#tipo_de_pacote = models.OneToOneField(TipoDePacote, limit_choices_to={'venda_autorizada': True})
+	tipo_de_pacote = models.ForeignKey(TipoDePacote, on_delete=models.PROTECT, limit_choices_to={'venda_autorizada': True})
+
+	def __unicode__(self):
+		#return str(self.id) + " - " + self.tipo_de_pacote
+		#return str(self.tipo_de_pacote) + " - " + str(self.remadorautorizado_set.count())
+		financeiro = str(self.responsavel_financeiro.nome)
+		tipo = str(self.tipo_de_pacote.nome)
+		return 'id ' + str(self.id) + ' :: ' + tipo + " :: " + financeiro + " :: SALDO = " + str(self.consultar_saldo()) + " min"
+	remadores_autorizados = models.ManyToManyField(Pessoa, through='RemadorAutorizado', through_fields=('pacote', 'pessoa'))
+
+	observacoes = models.TextField(verbose_name='Observações', blank=True, null=True)
+	#consumo_permitido = models.BooleanField(blank=True)
+
+
+        class Meta:
+                verbose_name = 'Registro de Venda de Pacote'
+                verbose_name_plural = 'Registros de Venda de Pacotes'
+		ordering = ["responsavel_financeiro__nome"]
+
+
+	#def clean(self):
+	#	if self.remadorautorizado_set.count() == 0:
+	#		raise ValidationError('O pacote deve ter pelo menos um remador autorizado.')
+	def remadores(self):
+		#responsaveis = self.objects.filter(remadores_autorizados__responsavel_financeiro=True)
+		remadores = self.remadores_autorizados.all()
+		retorno = ""
+		for r in remadores:
+			#if r.responsavel_financeiro == True:
+			retorno += str(r.nome) + ", "
+		if retorno.endswith(', '):
+			retorno = retorno[:-2]
+		return retorno
+	remadores.short_description = 'Remadores autorizados'
+
+	def tem_saldo(self):
+		retorno = False
+		if self.consultar_saldo() > 0:
+			retorno = True
+		return retorno
+
+	def dentro_do_prazo(self):
+		retorno = False
+		#data_consumo = timezone.now().date()
+		data_consumo = date.today()
+		data_venda = self.data_de_venda
+		data_validade = data_venda + timedelta(days=365)
+		if data_validade >= data_consumo:
+			retorno = True
+		return retorno
+
+	def consumo_autorizado(self):
+		retorno = False
+		if self.tem_saldo() == True:
+			if self.dentro_do_prazo() == True:
+				retorno = True
+		#self.consumo_permitido = retorno
+		return retorno
+
+	def consultar_saldo(self):
+		qtd_horas_pacote = self.tipo_de_pacote.duracao_min
+		total_consumido = 0
+		saldo = qtd_horas_pacote
+		consumos = ConsumoDePacote.objects.filter(pacote_consumido__id = self.id)
+		for c in consumos:
+			#saldo -= (c.tempo_de_duracao_da_remada * c.numero_de_pranchas_utilizadas)
+			saldo -= c.total_consumido()
+		return saldo
+	consultar_saldo.short_description = 'Saldo do Pacote (em minutos)'
+
+class RemadorAutorizado(models.Model):
+        pacote = models.ForeignKey(Pacote)
+        pessoa = models.ForeignKey(Pessoa, on_delete=models.PROTECT)
+        data_de_autorizacao = models.DateField(auto_now_add=True)
+        #responsavel_financeiro = models.BooleanField(default=False)
+
+	def __unicode__(self):
+		remador = str(self.pessoa.nome)
+		associado = str(self.pacote.responsavel_financeiro.nome)
+		sexo = ""
+		if self.pacote.responsavel_financeiro.sexo == 'M':
+			sexo = "do"
+		else:
+			sexo = "da"
+		#return remador + " (Obs: remador do pacote " + sexo + " " + associado + ")"
+		return remador
+
+        class Meta:
+                unique_together = ('pacote', 'pessoa',)
+
+
+
+#def get_limit_choices_to():
+#	return {'pacote_consumido': Pacote.objects.get(data_de_venda >= (datetime.date.today() - timedelta(months=12))).id}
+
+def data_limite():
+	return date.today() - timedelta(days=365)
+
+
+class ConsumoDePacote(models.Model):
+	DURACAO_REMADA = (
+		(15, '00:15'),
+		(30, '00:30'),
+		(45, '00:45'),
+		(60, '01:00'),
+		(75, '01:15'),
+		(90, '01:30'),
+		(105, '01:45'),
+		(120, '02:00'),
+	)
+
+	NUMERO_PRANCHAS = (
+		(1, 'Uma Prancha'),
+		(2, 'Duas Pranchas'),
+		(3, 'Tres Pranchas'),
+		(4, 'Quatro Pranchas'),
+		(5, 'Cinco pranchas'),
+		(6, 'Seis Pranchas'),
+		(7, 'Sete Pranchas'),
+		(8, 'Oito Pranhcas'),
+	)
+
+	#pacote_consumido = models.ForeignKey(Pacote, on_delete=models.PROTECT, limit_choices_to={'consumo_permitido': True})
+	pacote_consumido = models.ForeignKey(Pacote, on_delete=models.PROTECT, limit_choices_to={'data_de_venda__gte': data_limite()})
+        #pacote_consumido = models.ForeignKey(Pacote, on_delete=models.PROTECT, limit_choices_to=get_limit_choices_to)
+
+	#remador_autorizado = models.ForeignKey(RemadorAutorizado)
+        remador_autorizado = ChainedForeignKey(
+		RemadorAutorizado,
+		chained_field="pacote_consumido",
+		chained_model_field="pacote",
+		show_all=False,
+		auto_choose=True
+	)
+	data_e_hora_da_remada = models.DateTimeField()
+        tempo_de_duracao_da_remada = models.PositiveSmallIntegerField(choices=DURACAO_REMADA, verbose_name='Duração da remada (em minutos)')
+        numero_de_pranchas_utilizadas = models.PositiveSmallIntegerField(choices=NUMERO_PRANCHAS)
+	nota_sobre_consumo = models.TextField(blank=True, null=True)
+
+        class Meta:
+                verbose_name = 'Registro de Consumo de Pacote'
+                verbose_name_plural = 'Registros de Consumo de Pacotes'
+
+
+#	def limit_pacote_consumido_choices():
+#		return {'pacote_consumido__data_de_venda__gte': datetime.date.today() - timedelta(months=12)}
+#	teste = limit_pacote_consumido_choices
+
+	def total_consumido(self):
+                return self.tempo_de_duracao_da_remada * self.numero_de_pranchas_utilizadas
+	total_consumido.short_description = 'Total consumido (em minutos)'
+
+
+	def validar_consumo(self):
+		consumo_autorizado = False
+		saldo_pos_consumo = self.pacote_consumido.consultar_saldo()
+
+		#if (saldo_pre_consumo - self.tempo_de_duracao_da_remada * self.numero_de_pranchas_utilizadas) >= 0:
+		#	consumo_autorizado = True
+		#return (saldo_pre_consumo - self.tempo_de_duracao_da_remada * self.numero_de_pranchas_utilizadas)
+		if saldo_pos_consumo >= 0:
+			consumo_autorizado = True
+		#return saldo_pos_consumo
+		return consumo_autorizado
+	validar_consumo.short_description = 'Consumo autorizado?'
+	validar_consumo.boolean = True
+
+
+	def clean(self, *args, **kwargs):
+		# add custom validation here
+
+		if self.pacote_consumido == None:
+			raise ValidationError('Campo obrigatório não preenchido.')
+                if self.remador_autorizado == None:                               
+                        raise ValidationError('Campo obrigatório não preenchido.')
+                if self.data_e_hora_da_remada == None:                               
+                        raise ValidationError('Campo obrigatório não preenchido.')
+                if self.tempo_de_duracao_da_remada == None:                               
+                        raise ValidationError('Campo obrigatório não preenchido.')
+                if self.numero_de_pranchas_utilizadas == None:                               
+                        raise ValidationError('Campo obrigatório não preenchido.')
+
+		s = self.pacote_consumido.consultar_saldo()
+		#c =  self.tempo_de_duracao_da_remada * self.numero_de_pranchas_utilizadas
+                c =  self.total_consumido()
+		#self.pacote_consumido.consumo_autorizado()
+
+		#if self.pk is not None:
+		#	s += c	
+		
+		#if s - c < 0:
+                #if (s - c) < 0:
+		if s < c:
+			raise ValidationError('Saldo insuficiente para realização do consumo. (Saldo = '+str(s)+" min, e Consumo = "+str(c)+" min)")
+		if self.pacote_consumido.dentro_do_prazo() == False:			
+			raise ValidationError('Consumo não autorizado. Expirado o prazo de validade do pacote.')
+		if self.pacote_consumido.tem_saldo() == False:			
+			raise ValidationError('Saldo insuficiente para realização do consumo. (Saldo = '+str(s)+" min, e Consumo = "+str(c)+" min)")
+		super(ConsumoDePacote, self).clean(*args, **kwargs)
+
+	def save(self, *args, **kwargs):
+		#self.full_clean()
+		super(ConsumoDePacote, self).save(*args, **kwargs)
+
+        def __unicode__(self):
+                return str(self.remador_autorizado.pessoa.nome)
+
+#	def validar_remador(value):
+#		remador_validacao = value
+#		p = self.pacote_consumido
+#		remadores = self.pacote_consumido.remadores_autorizados.all()
+#		autorizado = False
+#		for remador in remadores:
+#                        if remador.id == remador_validacao.id:
+#                                autorizado = True
+#                                break
+#                if autorizado == False:
+#                        raise ValidationError('Consumo Negado. Remador não autorizado.')
+
+
+
+#	def clean(self):
+		#cleaned_data = self.cleaned_data
+
+#		sequencial = self.remador_autorizado.pessoa.id
+#		p = self.pacote_consumido
+#		if p == None:
+#			raise ValidationError('Escolha o Pacote a ser consumido')
+#		remadores = self.pacote_consumido.remadores_autorizados.all()
+#		autorizado = False
+#		for remador in remadores:
+#			if remador.id == sequencial:
+#				autorizado = True
+#				break
+#		if autorizado == False:
+#			raise ValidationError('Consumo Negado. Remador não autorizado.')
+#		super(ConsumoDePacote, self).clean()
+		#return cleaned_data
+
+class RequiredInlineFormSet(BaseInlineFormSet):
+#	"""
+#	Generates an inline formset that is required
+#	"""
+#
+#	def _construct_form(self, i, **kwargs):
+#		"""
+#		Override the method to change the form attribute empty_permitted
+#		"""
+#		form = super(RequiredInlineFormSet, self)._construct_form(i, **kwargs)
+#		form.empty_permitted = False
+#		return form
+
+	def clean(self):
+		"""Check that at least one service has been entered."""
+		super(RequiredInlineFormSet, self).clean()
+		if any(self.errors):
+			return
+		if not any(cleaned_data and not cleaned_data.get('DELETE', False)
+			for cleaned_data in self.cleaned_data):
+			raise forms.ValidationError('At least one item required.')

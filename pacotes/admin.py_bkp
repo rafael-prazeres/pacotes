@@ -1,0 +1,43 @@
+# -*- coding: utf-8 -*-
+from django.contrib import admin
+
+# Register your models here.
+
+from .models import Pessoa, TipoDePacote, Pacote, RemadorAutorizado, RequiredInlineFormSet
+
+#admin.site.register(Pessoa)
+class PessoaAdmin(admin.ModelAdmin):
+	fieldsets = [
+		('Informações Pessoais',{'fields': ['nome','telefone','email','sexo','data_nascimento','tipo_sanguineo']}),
+	]
+	#fields = ['nome','telefone','email','sexo','data_nascimento','tipo_sanguineo']
+	list_display = ('id','nome','telefone','email','sexo','data_nascimento','tipo_sanguineo')
+	search_fields = ['nome']
+
+admin.site.register(Pessoa, PessoaAdmin)
+
+class TipoDePacoteAdmin(admin.ModelAdmin):
+	fieldsets = [
+		('Informações do Tipo de Pacote',{'fields':['nome','quantidade_de_horas','prazo_de_validade','venda_autorizada']}),
+	]
+	list_display = ('id','nome','quantidade_de_horas','prazo_de_validade','venda_autorizada')
+	search_fields = ['nome']
+
+admin.site.register(TipoDePacote, TipoDePacoteAdmin)
+
+class RemadorAutorizadoInline(admin.TabularInline):
+	model = RemadorAutorizado
+	#extra = 1
+	formset = RequiredInlineFormSet
+
+class PacoteAdmin(admin.ModelAdmin):
+	fieldsets = [
+		('Informações do Pacote',{'fields': ['tipo_de_pacote','responsavel_financeiro']}),
+	]
+        inlines = [RemadorAutorizadoInline]
+	list_display = ('id','responsavel_financeiro','data_de_compra','tipo_de_pacote','remadores')
+	#list_display = ('id','data_de_compra','tipo_de_pacote','remadores')
+	#search_fields = ['remadores_autorizados']
+
+
+admin.site.register(Pacote, PacoteAdmin)
